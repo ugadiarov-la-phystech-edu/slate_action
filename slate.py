@@ -28,24 +28,26 @@ class SLATE(nn.Module):
             args.num_dec_blocks, (args.image_size // 4) ** 2, args.d_model, args.num_heads, args.dropout)
 
         self.out = linear(args.d_model, args.vocab_size, bias=False)
+        self.action_proj = linear(args.action_size, args.d_model, bias=False)
 
-    def forward(self, image, tau, hard):
+    def forward(self, image_prev, action, image_next, tau, hard):
         """
         image: batch_size x img_channels x H x W
         """
-
-        B, C, H, W = image.size()
+        action_repr = self.action_proj(action)
+        B, C, H, W = image_prev.size()
 
         # dvae encode
-        z_logits = F.log_softmax(self.dvae.encoder(image), dim=1)
+        z_logits = F.log_softmax(self.dvae.encoder(image_prev), dim=1)
         _, _, H_enc, W_enc = z_logits.size()
         z = gumbel_softmax(z_logits, tau, hard, dim=1)
 
         # dvae recon
         recon = self.dvae.decoder(z)
-        mse = ((image - recon) ** 2).sum() / B
+        mse = ((image_prev - recon) ** 2).sum() / B
 
         # hard z
+        z_logits = F.log_softmax(self.dvae.encoder(image_next), dim=1)
         z_hard = gumbel_softmax(z_logits, tau, True, dim=1).detach()
 
         # target tokens for transformer
@@ -64,10 +66,11 @@ class SLATE(nn.Module):
         slots, attns = self.slot_attn(emb_input[:, 1:])
         attns = attns.transpose(-1, -2)
         attns = attns.reshape(B, self.num_slots, 1, H_enc, W_enc).repeat_interleave(H // H_enc, dim=-2).repeat_interleave(W // W_enc, dim=-1)
-        attns = image.unsqueeze(1) * attns + 1. - attns
+        attns = image_prev.unsqueeze(1) * attns + 1. - attns
 
         # apply transformer
         slots = self.slot_proj(slots)
+        slots = torch.cat([action_repr.unsqueeze(1), slots], dim=1)
         decoder_output = self.tf_dec(emb_input[:, :-1], slots)
         pred = self.out(decoder_output)
         cross_entropy = -(z_transformer_target * torch.log_softmax(pred, dim=-1)).flatten(start_dim=1).sum(-1).mean()

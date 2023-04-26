@@ -8,9 +8,12 @@ from torch.optim import Adam
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+import wandb
 
 from shapes_3d import Shapes3D
 from slate import SLATE
+from causal_world import CausalWorldPush
+from env_data import EnvDataset
 
 parser = argparse.ArgumentParser()
 
@@ -22,9 +25,14 @@ parser.add_argument('--patience', type=int, default=4)
 parser.add_argument('--clip', type=float, default=1.0)
 parser.add_argument('--image_size', type=int, default=64)
 
+parser.add_argument('--action_size', type=int, default=9)
+parser.add_argument('--num_episodes', type=int, default=1200)
+parser.add_argument('--steps_per_episode', type=int, default=100)
+
 parser.add_argument('--checkpoint_path', default='checkpoint.pt.tar')
 parser.add_argument('--log_path', default='logs')
 parser.add_argument('--data_path', default='3dshapes.h5')
+parser.add_argument('--name', default='default')
 
 parser.add_argument('--lr_dvae', type=float, default=3e-4)
 parser.add_argument('--lr_main', type=float, default=1e-4)
@@ -57,11 +65,15 @@ torch.manual_seed(args.seed)
 arg_str_list = ['{}={}'.format(k, v) for k, v in vars(args).items()]
 arg_str = '__'.join(arg_str_list)
 log_dir = os.path.join(args.log_path, datetime.today().isoformat())
-writer = SummaryWriter(log_dir)
-writer.add_text('hparams', arg_str)
+# writer = SummaryWriter(log_dir)
+# writer.add_text('hparams', arg_str)
+wandb.init(project='slate action', config=args, name=args.name)
 
-train_dataset = Shapes3D(root=args.data_path, phase='train')
-val_dataset = Shapes3D(root=args.data_path, phase='val')
+env = CausalWorldPush(image_size=args.image_size)
+train_dataset = EnvDataset(env, args.num_episodes, args.steps_per_episode, data_path='./causal_world_data/')
+val_dataset = EnvDataset(env, args.num_episodes // 100, args.steps_per_episode)
+# train_dataset = Shapes3D(root=args.data_path, phase='train')
+# val_dataset = Shapes3D(root=args.data_path, phase='val')
 
 train_sampler = None
 val_sampler = None
@@ -197,19 +209,28 @@ for epoch in range(start_epoch, args.epochs):
                 print('Train Epoch: {:3} [{:5}/{:5}] \t Loss: {:F} \t MSE: {:F}'.format(
                       epoch+1, batch, train_epoch_size, loss.item(), mse.item()))
                 
-                writer.add_scalar('TRAIN/loss', loss.item(), global_step)
-                writer.add_scalar('TRAIN/cross_entropy', cross_entropy.item(), global_step)
-                writer.add_scalar('TRAIN/mse', mse.item(), global_step)
+                # writer.add_scalar('TRAIN/loss', loss.item(), global_step)
+                # writer.add_scalar('TRAIN/cross_entropy', cross_entropy.item(), global_step)
+                # writer.add_scalar('TRAIN/mse', mse.item(), global_step)
                 
-                writer.add_scalar('TRAIN/tau', tau, global_step)
-                writer.add_scalar('TRAIN/lr_dvae', optimizer.param_groups[0]['lr'], global_step)
-                writer.add_scalar('TRAIN/lr_main', optimizer.param_groups[1]['lr'], global_step)
+                # writer.add_scalar('TRAIN/tau', tau, global_step)
+                # writer.add_scalar('TRAIN/lr_dvae', optimizer.param_groups[0]['lr'], global_step)
+                # writer.add_scalar('TRAIN/lr_main', optimizer.param_groups[1]['lr'], global_step)
+                wandb.log({
+                    'TRAIN/loss': loss.item(),
+                    'TRAIN/cross_entropy': cross_entropy.item(),
+                    'TRAIN/mse': mse.item(),
+                    'TRAIN/tau': tau,
+                    'TRAIN/lr_dvae': optimizer.param_groups[0]['lr'],
+                    'TRAIN/lr_main': optimizer.param_groups[1]['lr']
+                }, step=global_step)
 
     with torch.no_grad():
         gen_img = model.reconstruct_autoregressive(image[:32])
         vis_recon = visualize(image, recon, gen_img, attns, N=32)
         grid = vutils.make_grid(vis_recon, nrow=args.num_slots + 3, pad_value=0.2)[:, 2:-2, 2:-2]
-        writer.add_image('TRAIN_recon/epoch={:03}'.format(epoch+1), grid)
+        # writer.add_image('TRAIN_recon/epoch={:03}'.format(epoch+1), grid)
+        wandb.log({'TRAIN_recon/epoch={:03}'.format(epoch+1): wandb.Image(grid)}, step=global_step)
     
     with torch.no_grad():
         model.eval()
@@ -242,13 +263,21 @@ for epoch in range(start_epoch, args.epochs):
         val_loss_relax = val_mse_relax + val_cross_entropy_relax
         val_loss = val_mse + val_cross_entropy
 
-        writer.add_scalar('VAL/loss_relax', val_loss_relax, epoch+1)
-        writer.add_scalar('VAL/cross_entropy_relax', val_cross_entropy_relax, epoch + 1)
-        writer.add_scalar('VAL/mse_relax', val_mse_relax, epoch+1)
+        # writer.add_scalar('VAL/loss_relax', val_loss_relax, epoch+1)
+        # writer.add_scalar('VAL/cross_entropy_relax', val_cross_entropy_relax, epoch + 1)
+        # writer.add_scalar('VAL/mse_relax', val_mse_relax, epoch+1)
 
-        writer.add_scalar('VAL/loss', val_loss, epoch+1)
-        writer.add_scalar('VAL/cross_entropy', val_cross_entropy, epoch + 1)
-        writer.add_scalar('VAL/mse', val_mse, epoch+1)
+        # writer.add_scalar('VAL/loss', val_loss, epoch+1)
+        # writer.add_scalar('VAL/cross_entropy', val_cross_entropy, epoch + 1)
+        # writer.add_scalar('VAL/mse', val_mse, epoch+1)
+        wandb.log({
+            'VAL/loss_relax': val_loss_relax,
+            'VAL/cross_entropy_relax': val_cross_entropy_relax,
+            'VAL/mse_relax': val_mse_relax,
+            'VAL/loss': val_loss,
+            'VAL/cross_entropy': val_cross_entropy,
+            'VAL/mse': val_mse
+        }, step=epoch+1)
 
         print('====> Epoch: {:3} \t Loss = {:F} \t MSE = {:F}'.format(
             epoch+1, val_loss, val_mse))
@@ -264,7 +293,8 @@ for epoch in range(start_epoch, args.epochs):
                 gen_img = model.reconstruct_autoregressive(image)
                 vis_recon = visualize(image, recon, gen_img, attns, N=32)
                 grid = vutils.make_grid(vis_recon, nrow=args.num_slots + 3, pad_value=0.2)[:, 2:-2, 2:-2]
-                writer.add_image('VAL_recon/epoch={:03}'.format(epoch + 1), grid)
+                # writer.add_image('VAL_recon/epoch={:03}'.format(epoch + 1), grid)
+                wandb.log({'VAL_recon/epoch={:03}'.format(epoch+1): wandb.Image(grid)}, step=global_step)
 
         else:
             stagnation_counter += 1
@@ -272,7 +302,8 @@ for epoch in range(start_epoch, args.epochs):
                 lr_decay_factor = lr_decay_factor / 2.0
                 stagnation_counter = 0
 
-        writer.add_scalar('VAL/best_loss', best_val_loss, epoch+1)
+        # writer.add_scalar('VAL/best_loss', best_val_loss, epoch+1)
+        wandb.log({'VAL/best_loss': best_val_loss}, step=epoch+1)
 
         checkpoint = {
             'epoch': epoch + 1,
@@ -288,4 +319,5 @@ for epoch in range(start_epoch, args.epochs):
 
         print('====> Best Loss = {:F} @ Epoch {}'.format(best_val_loss, best_epoch))
 
-writer.close()
+# writer.close()
+wandb.finish()
