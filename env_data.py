@@ -28,7 +28,7 @@ class EnvDataset(Dataset):
         obs_before = self.observations[idx_episode, idx_step]
         obs_after = self.observations[idx_episode, idx_step + 1]
         action = self.actions[idx_episode, idx_step]
-        return obs_before, action, obs_after
+        return obs_before / 255., action, obs_after / 255.
 
     def collect_data(self):
         all_observations = []

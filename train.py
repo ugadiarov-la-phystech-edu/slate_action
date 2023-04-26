@@ -12,14 +12,14 @@ import wandb
 
 from shapes_3d import Shapes3D
 from slate import SLATE
-from causal_world import CausalWorldPush
+from causal_world_push import CausalWorldPush
 from env_data import EnvDataset
 
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--num_workers', type=int, default=4)
 parser.add_argument('--seed', type=int, default=0)
-parser.add_argument('--batch_size', type=int, default=50)
+parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--epochs', type=int, default=20)
 parser.add_argument('--patience', type=int, default=4)
 parser.add_argument('--clip', type=float, default=1.0)
@@ -172,7 +172,7 @@ for epoch in range(start_epoch, args.epochs):
     
     model.train()
     
-    for batch, image in enumerate(train_loader):
+    for batch, (image_prev, action, image_next) in enumerate(train_loader):
         global_step = epoch * train_epoch_size + batch
         
         tau = cosine_anneal(
@@ -192,11 +192,13 @@ for epoch in range(start_epoch, args.epochs):
         optimizer.param_groups[0]['lr'] = lr_decay_factor * args.lr_dvae
         optimizer.param_groups[1]['lr'] = lr_decay_factor * lr_warmup_factor * args.lr_main
 
-        image = image.cuda()
+        image_prev = image_prev.cuda()
+        image_next = image_next.cuda()
+        action = action.cuda()
 
         optimizer.zero_grad()
 
-        (recon, cross_entropy, mse, attns) = model(image, tau, args.hard)
+        (recon, cross_entropy, mse, attns) = model(image_prev, action, image_next, tau, args.hard)
         
         loss = mse + cross_entropy
         
@@ -226,8 +228,8 @@ for epoch in range(start_epoch, args.epochs):
                 }, step=global_step)
 
     with torch.no_grad():
-        gen_img = model.reconstruct_autoregressive(image[:32])
-        vis_recon = visualize(image, recon, gen_img, attns, N=32)
+        gen_img = model.reconstruct_autoregressive(image_prev[:32], action[:32])
+        vis_recon = visualize(image_prev, recon, gen_img, attns, N=32)
         grid = vutils.make_grid(vis_recon, nrow=args.num_slots + 3, pad_value=0.2)[:, 2:-2, 2:-2]
         # writer.add_image('TRAIN_recon/epoch={:03}'.format(epoch+1), grid)
         wandb.log({'TRAIN_recon/epoch={:03}'.format(epoch+1): wandb.Image(grid)}, step=global_step)
@@ -241,12 +243,14 @@ for epoch in range(start_epoch, args.epochs):
         val_cross_entropy = 0.
         val_mse = 0.
         
-        for batch, image in enumerate(val_loader):
-            image = image.cuda()
+        for batch, (image_prev, action, image_next) in enumerate(val_loader):
+            image_prev = image_prev.cuda()
+            image_next = image_next.cuda()
+            action = action.cuda()
 
-            (recon_relax, cross_entropy_relax, mse_relax, attns_relax) = model(image, tau, False)
+            (recon_relax, cross_entropy_relax, mse_relax, attns_relax) = model(image_prev, action, image_next, tau, False)
             
-            (recon, cross_entropy, mse, attns) = model(image, tau, True)
+            (recon, cross_entropy, mse, attns) = model(image_prev, action, image_next, tau, True)
             
             val_cross_entropy_relax += cross_entropy_relax.item()
             val_mse_relax += mse_relax.item()
@@ -290,8 +294,8 @@ for epoch in range(start_epoch, args.epochs):
             torch.save(model.state_dict(), os.path.join(log_dir, 'best_model.pt'))
 
             if 50 <= epoch:
-                gen_img = model.reconstruct_autoregressive(image)
-                vis_recon = visualize(image, recon, gen_img, attns, N=32)
+                gen_img = model.reconstruct_autoregressive(image_prev, action)
+                vis_recon = visualize(image_prev, recon, gen_img, attns, N=32)
                 grid = vutils.make_grid(vis_recon, nrow=args.num_slots + 3, pad_value=0.2)[:, 2:-2, 2:-2]
                 # writer.add_image('VAL_recon/epoch={:03}'.format(epoch + 1), grid)
                 wandb.log({'VAL_recon/epoch={:03}'.format(epoch+1): wandb.Image(grid)}, step=global_step)

@@ -82,11 +82,11 @@ class SLATE(nn.Module):
             attns
         )
 
-    def reconstruct_autoregressive(self, image, eval=False):
+    def reconstruct_autoregressive(self, image, action, eval=False):
         """
         image: batch_size x img_channels x H x W
         """
-
+        action_repr = self.action_proj(action)
         gen_len = (image.size(-1) // 4) ** 2
 
         B, C, H, W = image.size()
@@ -115,6 +115,7 @@ class SLATE(nn.Module):
         attns = attns.reshape(B, self.num_slots, 1, H_enc, W_enc).repeat_interleave(H // H_enc, dim=-2).repeat_interleave(W // W_enc, dim=-1)
         attns = image.unsqueeze(1) * attns + (1. - attns)
         slots = self.slot_proj(slots)
+        slots = torch.cat([action_repr.unsqueeze(1), slots], dim=1)
 
         # generate image tokens auto-regressively
         z_gen = z_hard.new_zeros(0)
