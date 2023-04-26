@@ -31,6 +31,31 @@ class SlotAttention(nn.Module):
             nn.ReLU(),
             linear(mlp_hidden_size, slot_size))
 
+    def _step(self, slots, k, v, B, N_kv, N_q):
+        slots_prev = slots
+        slots = self.norm_slots(slots)
+        
+        # Attention.
+        q = self.project_q(slots).view(B, N_q, self.num_heads, -1).transpose(1, 2)  # Shape: [batch_size, num_heads, num_slots, slot_size // num_heads].
+        attn_logits = torch.matmul(k, q.transpose(-1, -2))                             # Shape: [batch_size, num_heads, num_inputs, num_slots].
+        attn = F.softmax(
+            attn_logits.transpose(1, 2).reshape(B, N_kv, self.num_heads * N_q)
+        , dim=-1).view(B, N_kv, self.num_heads, N_q).transpose(1, 2)                # Shape: [batch_size, num_heads, num_inputs, num_slots].
+        attn_vis = attn.sum(1)                                                      # Shape: [batch_size, num_inputs, num_slots].
+        
+        # Weighted mean.
+        attn = attn + self.epsilon
+        attn = attn / torch.sum(attn, dim=-2, keepdim=True)
+        updates = torch.matmul(attn.transpose(-1, -2), v)                              # Shape: [batch_size, num_heads, num_slots, slot_size // num_heads].
+        updates = updates.transpose(1, 2).reshape(B, N_q, -1)                          # Shape: [batch_size, num_slots, slot_size].
+        
+        # Slot update.
+        slots = self.gru(updates.view(-1, self.slot_size),
+                            slots_prev.view(-1, self.slot_size))
+        slots = slots.view(-1, self.num_slots, self.slot_size)
+        slots = slots + self.mlp(self.norm_mlp(slots))
+        return slots, attn_vis
+
     def forward(self, inputs, slots):
         # `inputs` has shape [batch_size, num_inputs, input_size].
         # `slots` has shape [batch_size, num_slots, slot_size].
@@ -44,29 +69,9 @@ class SlotAttention(nn.Module):
         k = ((self.slot_size // self.num_heads) ** (-0.5)) * k
         
         # Multiple rounds of attention.
-        for _ in range(self.num_iterations):
-            slots_prev = slots
-            slots = self.norm_slots(slots)
-            
-            # Attention.
-            q = self.project_q(slots).view(B, N_q, self.num_heads, -1).transpose(1, 2)  # Shape: [batch_size, num_heads, num_slots, slot_size // num_heads].
-            attn_logits = torch.matmul(k, q.transpose(-1, -2))                             # Shape: [batch_size, num_heads, num_inputs, num_slots].
-            attn = F.softmax(
-                attn_logits.transpose(1, 2).reshape(B, N_kv, self.num_heads * N_q)
-            , dim=-1).view(B, N_kv, self.num_heads, N_q).transpose(1, 2)                # Shape: [batch_size, num_heads, num_inputs, num_slots].
-            attn_vis = attn.sum(1)                                                      # Shape: [batch_size, num_inputs, num_slots].
-            
-            # Weighted mean.
-            attn = attn + self.epsilon
-            attn = attn / torch.sum(attn, dim=-2, keepdim=True)
-            updates = torch.matmul(attn.transpose(-1, -2), v)                              # Shape: [batch_size, num_heads, num_slots, slot_size // num_heads].
-            updates = updates.transpose(1, 2).reshape(B, N_q, -1)                          # Shape: [batch_size, num_slots, slot_size].
-            
-            # Slot update.
-            slots = self.gru(updates.view(-1, self.slot_size),
-                             slots_prev.view(-1, self.slot_size))
-            slots = slots.view(-1, self.num_slots, self.slot_size)
-            slots = slots + self.mlp(self.norm_mlp(slots))
+        for _ in range(self.num_iterations - 1):
+            slots, _ = self._step(slots, k, v, B, N_kv, N_q)
+        slots, attn_vis = self._step(slots.detach(), k, v, B, N_kv, N_q)
         
         return slots, attn_vis
 
