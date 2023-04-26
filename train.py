@@ -65,8 +65,8 @@ torch.manual_seed(args.seed)
 arg_str_list = ['{}={}'.format(k, v) for k, v in vars(args).items()]
 arg_str = '__'.join(arg_str_list)
 log_dir = os.path.join(args.log_path, datetime.today().isoformat())
-# writer = SummaryWriter(log_dir)
-# writer.add_text('hparams', arg_str)
+writer = SummaryWriter(log_dir)
+writer.add_text('hparams', arg_str)
 wandb.init(project='slate action', config=args, name=args.name)
 
 env = CausalWorldPush(image_size=args.image_size)
