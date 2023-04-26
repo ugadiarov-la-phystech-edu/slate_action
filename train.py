@@ -158,15 +158,16 @@ def cosine_anneal(step, start_value, final_value, start_step, final_step):
     return value
 
 
-def visualize(image, recon_orig, image_next, gen, attns, N=8):
+def visualize(image, recon_orig, image_gen, image_next, gen, attns, N=8):
     _, _, H, W = image.shape
     image = image[:N].expand(-1, 3, H, W).unsqueeze(dim=1)
     image_next = image_next[:N].expand(-1, 3, H, W).unsqueeze(dim=1)
     recon_orig = recon_orig[:N].expand(-1, 3, H, W).unsqueeze(dim=1)
     gen = gen[:N].expand(-1, 3, H, W).unsqueeze(dim=1)
+    image_gen = image_gen[:N].expand(-1, 3, H, W).unsqueeze(dim=1)
     attns = attns[:N].expand(-1, -1, 3, H, W)
 
-    return torch.cat((image, recon_orig, image_next, gen, attns), dim=1).view(-1, 3, H, W)
+    return torch.cat((image, recon_orig, image_gen, image_next, gen, attns), dim=1).view(-1, 3, H, W)
 
 
 for epoch in range(start_epoch, args.epochs):
@@ -199,9 +200,9 @@ for epoch in range(start_epoch, args.epochs):
 
         optimizer.zero_grad()
 
-        (recon, cross_entropy, mse, attns) = model(image_prev, action, image_next, tau, args.hard)
+        (recon, cross_entropy, cross_entropy_next, mse, attns) = model(image_prev, action, image_next, tau, args.hard)
         
-        loss = mse + cross_entropy
+        loss = mse + cross_entropy + cross_entropy_next
         
         loss.backward()
         clip_grad_norm_(model.parameters(), args.clip, 'inf')
@@ -222,6 +223,7 @@ for epoch in range(start_epoch, args.epochs):
                 wandb.log({
                     'TRAIN/loss': loss.item(),
                     'TRAIN/cross_entropy': cross_entropy.item(),
+                    'TRAIN/cross_entropy_next': cross_entropy_next.item(),
                     'TRAIN/mse': mse.item(),
                     'TRAIN/tau': tau,
                     'TRAIN/lr_dvae': optimizer.param_groups[0]['lr'],
@@ -229,9 +231,10 @@ for epoch in range(start_epoch, args.epochs):
                 }, step=global_step)
 
     with torch.no_grad():
-        gen_img = model.reconstruct_autoregressive(image_prev[:32], action[:32])
-        vis_recon = visualize(image_prev, recon, image_next, gen_img, attns, N=32)
-        grid = vutils.make_grid(vis_recon, nrow=args.num_slots + 4, pad_value=0.2)[:, 2:-2, 2:-2]
+        gen_img = model.reconstruct_autoregressive(image_prev[:32])
+        gen_img_next = model.reconstruct_autoregressive(image_prev[:32], action[:32])
+        vis_recon = visualize(image_prev, recon, gen_img, image_next, gen_img, attns, N=32)
+        grid = vutils.make_grid(vis_recon, nrow=args.num_slots + 5, pad_value=0.2)[:, 2:-2, 2:-2]
         # writer.add_image('TRAIN_recon/epoch={:03}'.format(epoch+1), grid)
         wandb.log({'TRAIN_recon/': wandb.Image(grid)}, step=global_step)
     
@@ -239,9 +242,11 @@ for epoch in range(start_epoch, args.epochs):
         model.eval()
         
         val_cross_entropy_relax = 0.
+        val_cross_entropy_relax_next = 0.
         val_mse_relax = 0.
         
         val_cross_entropy = 0.
+        val_cross_entropy_next = 0.
         val_mse = 0.
         
         for batch, (image_prev, action, image_next) in enumerate(val_loader):
@@ -249,20 +254,28 @@ for epoch in range(start_epoch, args.epochs):
             image_next = image_next.cuda()
             action = action.cuda()
 
-            (recon_relax, cross_entropy_relax, mse_relax, attns_relax) = model(image_prev, action, image_next, tau, False)
+            (recon_relax, cross_entropy_relax, cross_entropy_relax_next, mse_relax, attns_relax) = model(image_prev, action, image_next, tau, False)
             
-            (recon, cross_entropy, mse, attns) = model(image_prev, action, image_next, tau, True)
+            (recon, cross_entropy, cross_entropy_next, mse, attns) = model(image_prev, action, image_next, tau, True)
             
             val_cross_entropy_relax += cross_entropy_relax.item()
+            val_cross_entropy_relax_next += cross_entropy_relax_next.item()
+
             val_mse_relax += mse_relax.item()
             
             val_cross_entropy += cross_entropy.item()
+            val_cross_entropy_next += cross_entropy_next.item()
+
             val_mse += mse.item()
 
         val_cross_entropy_relax /= (val_epoch_size)
+        val_cross_entropy_relax_next /= (val_epoch_size)
+
         val_mse_relax /= (val_epoch_size)
         
         val_cross_entropy /= (val_epoch_size)
+        val_cross_entropy_next /= (val_epoch_size)
+
         val_mse /= (val_epoch_size)
         
         val_loss_relax = val_mse_relax + val_cross_entropy_relax
@@ -278,9 +291,13 @@ for epoch in range(start_epoch, args.epochs):
         wandb.log({
             'VAL/loss_relax': val_loss_relax,
             'VAL/cross_entropy_relax': val_cross_entropy_relax,
+            'VAL/cross_entropy_relax_next': val_cross_entropy_relax_next,
+
             'VAL/mse_relax': val_mse_relax,
             'VAL/loss': val_loss,
             'VAL/cross_entropy': val_cross_entropy,
+            'VAL/cross_entropy_next': val_cross_entropy_next,
+
             'VAL/mse': val_mse
         }, step=epoch+1)
 
@@ -295,9 +312,10 @@ for epoch in range(start_epoch, args.epochs):
             torch.save(model.state_dict(), os.path.join(log_dir, 'best_model.pt'))
 
             if 50 <= epoch:
-                gen_img = model.reconstruct_autoregressive(image_prev, action)
-                vis_recon = visualize(image_prev, recon, image_next, gen_img, attns, N=32)
-                grid = vutils.make_grid(vis_recon, nrow=args.num_slots + 4, pad_value=0.2)[:, 2:-2, 2:-2]
+                gen_img = model.reconstruct_autoregressive(image_prev)
+                gen_img_next = model.reconstruct_autoregressive(image_prev, action)
+                vis_recon = visualize(image_prev, recon, gen_img, image_next, gen_img, attns, N=32)
+                grid = vutils.make_grid(vis_recon, nrow=args.num_slots + 5, pad_value=0.2)[:, 2:-2, 2:-2]
                 # writer.add_image('VAL_recon/epoch={:03}'.format(epoch + 1), grid)
                 wandb.log({'VAL_recon/': wandb.Image(grid)}, step=global_step)
 

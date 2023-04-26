@@ -46,7 +46,35 @@ class SLATE(nn.Module):
         recon = self.dvae.decoder(z)
         mse = ((image_prev - recon) ** 2).sum() / B
 
-        # hard z
+        # same frame reconstruction
+        z_hard = gumbel_softmax(z_logits, tau, True, dim=1).detach()
+
+        # target tokens for transformer
+        z_transformer_target = z_hard.permute(0, 2, 3, 1).flatten(start_dim=1, end_dim=2)
+
+        # add BOS token
+        z_transformer_input = torch.cat([torch.zeros_like(z_transformer_target[..., :1]), z_transformer_target], dim=-1)
+        z_transformer_input = torch.cat([torch.zeros_like(z_transformer_input[..., :1, :]), z_transformer_input], dim=-2)
+        z_transformer_input[:, 0, 0] = 1.0
+
+        # tokens to embeddings
+        emb_input = self.dictionary(z_transformer_input)
+        emb_input = self.positional_encoder(emb_input)
+
+        # apply slot attention
+        slots, attns = self.slot_attn(emb_input[:, 1:])
+        attns = attns.transpose(-1, -2)
+        attns = attns.reshape(B, self.num_slots, 1, H_enc, W_enc).repeat_interleave(H // H_enc, dim=-2).repeat_interleave(W // W_enc, dim=-1)
+        attns = image_prev.unsqueeze(1) * attns + 1. - attns
+
+        # apply transformer
+        slots = self.slot_proj(slots)
+        decoder_output = self.tf_dec(emb_input[:, :-1], slots)
+        pred = self.out(decoder_output)
+        cross_entropy = -(z_transformer_target * torch.log_softmax(pred, dim=-1)).flatten(start_dim=1).sum(-1).mean()
+
+
+        # next frame reconstruction
         z_logits = F.log_softmax(self.dvae.encoder(image_next), dim=1)
         z_hard = gumbel_softmax(z_logits, tau, True, dim=1).detach()
 
@@ -70,23 +98,23 @@ class SLATE(nn.Module):
 
         # apply transformer
         slots = self.slot_proj(slots)
-        slots = torch.cat([action_repr.unsqueeze(1), slots], dim=1)
+        slots = torch.cat([slots, action_repr.unsqueeze(1)], dim=1)
         decoder_output = self.tf_dec(emb_input[:, :-1], slots)
         pred = self.out(decoder_output)
-        cross_entropy = -(z_transformer_target * torch.log_softmax(pred, dim=-1)).flatten(start_dim=1).sum(-1).mean()
+        cross_entropy_next = -(z_transformer_target * torch.log_softmax(pred, dim=-1)).flatten(start_dim=1).sum(-1).mean()
 
         return (
             recon.clamp(0., 1.),
             cross_entropy,
+            cross_entropy_next,
             mse,
             attns
         )
 
-    def reconstruct_autoregressive(self, image, action, eval=False):
+    def reconstruct_autoregressive(self, image, action=None, eval=False):
         """
         image: batch_size x img_channels x H x W
         """
-        action_repr = self.action_proj(action)
         gen_len = (image.size(-1) // 4) ** 2
 
         B, C, H, W = image.size()
@@ -115,7 +143,9 @@ class SLATE(nn.Module):
         attns = attns.reshape(B, self.num_slots, 1, H_enc, W_enc).repeat_interleave(H // H_enc, dim=-2).repeat_interleave(W // W_enc, dim=-1)
         attns = image.unsqueeze(1) * attns + (1. - attns)
         slots = self.slot_proj(slots)
-        slots = torch.cat([action_repr.unsqueeze(1), slots], dim=1)
+        if action is not None:
+            action_repr = self.action_proj(action)
+            slots = torch.cat([slots, action_repr.unsqueeze(1)], dim=1)
 
         # generate image tokens auto-regressively
         z_gen = z_hard.new_zeros(0)
