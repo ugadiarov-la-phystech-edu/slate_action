@@ -233,7 +233,7 @@ for epoch in range(start_epoch, args.epochs):
         vis_recon = visualize(image_prev, recon, image_next, gen_img, attns, N=32)
         grid = vutils.make_grid(vis_recon, nrow=args.num_slots + 4, pad_value=0.2)[:, 2:-2, 2:-2]
         # writer.add_image('TRAIN_recon/epoch={:03}'.format(epoch+1), grid)
-        wandb.log({'TRAIN_recon/epoch={:03}'.format(epoch+1): wandb.Image(grid)}, step=global_step)
+        wandb.log({'TRAIN_recon/': wandb.Image(grid)}, step=global_step)
     
     with torch.no_grad():
         model.eval()
@@ -299,7 +299,7 @@ for epoch in range(start_epoch, args.epochs):
                 vis_recon = visualize(image_prev, recon, image_next, gen_img, attns, N=32)
                 grid = vutils.make_grid(vis_recon, nrow=args.num_slots + 4, pad_value=0.2)[:, 2:-2, 2:-2]
                 # writer.add_image('VAL_recon/epoch={:03}'.format(epoch + 1), grid)
-                wandb.log({'VAL_recon/epoch={:03}'.format(epoch+1): wandb.Image(grid)}, step=global_step)
+                wandb.log({'VAL_recon/': wandb.Image(grid)}, step=global_step)
 
         else:
             stagnation_counter += 1
