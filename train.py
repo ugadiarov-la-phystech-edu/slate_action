@@ -202,7 +202,7 @@ for epoch in range(start_epoch, args.epochs):
 
         (recon, cross_entropy, cross_entropy_next, mse, attns) = model(image_prev, action, image_next, tau, args.hard)
         
-        loss = mse + cross_entropy + cross_entropy_next
+        loss = mse + 0.2 * cross_entropy + 0.8 * cross_entropy_next
         
         loss.backward()
         clip_grad_norm_(model.parameters(), args.clip, 'inf')
