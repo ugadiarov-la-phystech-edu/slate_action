@@ -28,7 +28,9 @@ class SLATE(nn.Module):
             args.num_dec_blocks, (args.image_size // 4) ** 2, args.d_model, args.num_heads, args.dropout)
 
         self.out = linear(args.d_model, args.vocab_size, bias=False)
-        self.action_proj = linear(args.action_size, args.d_model, bias=False)
+        self.action_proj = linear(args.action_size, args.d_model, bias=True)
+        # action that leads to zero change in state
+        self.zero_action = torch.zeros(1, 1, args.action_size).to(next(self.parameters()).device)
 
     def forward(self, image_prev, action, image_next, tau, hard):
         """
@@ -69,6 +71,9 @@ class SLATE(nn.Module):
 
         # apply transformer
         slots = self.slot_proj(slots)
+        zero_action = self.action_proj(self.zero_action)
+        zeros_action = zero_action.expand(B, 1, -1)
+        slots = torch.cat([slots, zeros_action], dim=1)
         decoder_output = self.tf_dec(emb_input[:, :-1], slots)
         pred = self.out(decoder_output)
         cross_entropy = -(z_transformer_target * torch.log_softmax(pred, dim=-1)).flatten(start_dim=1).sum(-1).mean()
