@@ -30,7 +30,7 @@ class SLATE(nn.Module):
         self.out = linear(args.d_model, args.vocab_size, bias=False)
         self.action_proj = linear(args.action_size, args.d_model, bias=True)
         # action that leads to zero change in state
-        self.zero_action = torch.zeros(1, 1, args.action_size).to(next(self.parameters()).device)
+        self.zero_action = torch.zeros(1, 1, args.action_size).to('cuda')
 
     def forward(self, image_prev, action, image_next, tau, hard):
         """
