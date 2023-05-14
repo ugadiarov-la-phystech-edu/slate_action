@@ -151,7 +151,10 @@ class SLATE(nn.Module):
         if action is not None:
             action_repr = self.action_proj(action)
             slots = torch.cat([slots, action_repr.unsqueeze(1)], dim=1)
-
+        else:
+            zero_action = self.action_proj(self.zero_action)
+            zeros_action = zero_action.expand(B, 1, -1)
+            slots = torch.cat([slots, zeros_action], dim=1)
         # generate image tokens auto-regressively
         z_gen = z_hard.new_zeros(0)
         z_transformer_input = z_hard.new_zeros(B, 1, self.vocab_size + 1)

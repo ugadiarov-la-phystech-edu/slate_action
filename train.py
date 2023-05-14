@@ -202,7 +202,7 @@ for epoch in range(start_epoch, args.epochs):
 
         (recon, cross_entropy, cross_entropy_next, mse, attns) = model(image_prev, action, image_next, tau, args.hard)
         
-        loss = mse + 0.2 * cross_entropy + 0.8 * cross_entropy_next
+        loss = mse + 0.3 * cross_entropy + 0.7 * cross_entropy_next
         
         loss.backward()
         clip_grad_norm_(model.parameters(), args.clip, 'inf')
@@ -233,7 +233,7 @@ for epoch in range(start_epoch, args.epochs):
     with torch.no_grad():
         gen_img = model.reconstruct_autoregressive(image_prev[:32])
         gen_img_next = model.reconstruct_autoregressive(image_prev[:32], action[:32])
-        vis_recon = visualize(image_prev, recon, gen_img, image_next, gen_img, attns, N=32)
+        vis_recon = visualize(image_prev, recon, gen_img, image_next, gen_img_next, attns, N=32)
         grid = vutils.make_grid(vis_recon, nrow=args.num_slots + 5, pad_value=0.2)[:, 2:-2, 2:-2]
         # writer.add_image('TRAIN_recon/epoch={:03}'.format(epoch+1), grid)
         wandb.log({'TRAIN_recon/': wandb.Image(grid)}, step=global_step)
@@ -314,7 +314,7 @@ for epoch in range(start_epoch, args.epochs):
             if 50 <= epoch:
                 gen_img = model.reconstruct_autoregressive(image_prev)
                 gen_img_next = model.reconstruct_autoregressive(image_prev, action)
-                vis_recon = visualize(image_prev, recon, gen_img, image_next, gen_img, attns, N=32)
+                vis_recon = visualize(image_prev, recon, gen_img, image_next, gen_img_next, attns, N=32)
                 grid = vutils.make_grid(vis_recon, nrow=args.num_slots + 5, pad_value=0.2)[:, 2:-2, 2:-2]
                 # writer.add_image('VAL_recon/epoch={:03}'.format(epoch + 1), grid)
                 wandb.log({'VAL_recon/': wandb.Image(grid)}, step=global_step)
