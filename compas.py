@@ -4,7 +4,7 @@ from slot_attn import SlotAttentionEncoder
 from transformer import PositionalEncoding, TransformerDecoder
 
 
-class SLATE(nn.Module):
+class COMPAS(nn.Module):
     def __init__(self, args):
         super().__init__()
 

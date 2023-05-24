@@ -10,8 +10,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import wandb
 
-from shapes_3d import Shapes3D
-from slate import SLATE
+from compas import COMPAS
 from causal_world_push import CausalWorldPush
 from env_data import EnvDataset
 
@@ -67,13 +66,12 @@ arg_str = '__'.join(arg_str_list)
 log_dir = os.path.join(args.log_path, datetime.today().isoformat())
 writer = SummaryWriter(log_dir)
 writer.add_text('hparams', arg_str)
-wandb.init(project='slate action', config=args, name=args.name)
+wandb.init(project='compas', config=args, name=args.name)
 
 env = CausalWorldPush(image_size=args.image_size)
 train_dataset = EnvDataset(env, args.num_episodes, args.steps_per_episode, data_path='./causal_world_data/')
 val_dataset = EnvDataset(env, args.num_episodes // 100, args.steps_per_episode)
-# train_dataset = Shapes3D(root=args.data_path, phase='train')
-# val_dataset = Shapes3D(root=args.data_path, phase='val')
+
 
 train_sampler = None
 val_sampler = None
@@ -94,7 +92,7 @@ val_epoch_size = len(val_loader)
 
 log_interval = train_epoch_size // 5
 
-model = SLATE(args)
+model = COMPAS(args)
 
 if os.path.isfile(args.checkpoint_path):
     checkpoint = torch.load(args.checkpoint_path, map_location='cpu')
