@@ -211,13 +211,6 @@ for epoch in range(start_epoch, args.epochs):
                 print('Train Epoch: {:3} [{:5}/{:5}] \t Loss: {:F} \t MSE: {:F}'.format(
                       epoch+1, batch, train_epoch_size, loss.item(), mse.item()))
                 
-                # writer.add_scalar('TRAIN/loss', loss.item(), global_step)
-                # writer.add_scalar('TRAIN/cross_entropy', cross_entropy.item(), global_step)
-                # writer.add_scalar('TRAIN/mse', mse.item(), global_step)
-                
-                # writer.add_scalar('TRAIN/tau', tau, global_step)
-                # writer.add_scalar('TRAIN/lr_dvae', optimizer.param_groups[0]['lr'], global_step)
-                # writer.add_scalar('TRAIN/lr_main', optimizer.param_groups[1]['lr'], global_step)
                 wandb.log({
                     'TRAIN/loss': loss.item(),
                     'TRAIN/cross_entropy': cross_entropy.item(),
@@ -233,7 +226,6 @@ for epoch in range(start_epoch, args.epochs):
         gen_img_next = model.reconstruct_autoregressive(image_prev[:32], action[:32])
         vis_recon = visualize(image_prev, recon, gen_img, image_next, gen_img_next, attns, N=32)
         grid = vutils.make_grid(vis_recon, nrow=args.num_slots + 5, pad_value=0.2)[:, 2:-2, 2:-2]
-        # writer.add_image('TRAIN_recon/epoch={:03}'.format(epoch+1), grid)
         wandb.log({'TRAIN_recon/': wandb.Image(grid)}, step=global_step)
     
     with torch.no_grad():
@@ -279,13 +271,6 @@ for epoch in range(start_epoch, args.epochs):
         val_loss_relax = val_mse_relax + val_cross_entropy_relax
         val_loss = val_mse + val_cross_entropy
 
-        # writer.add_scalar('VAL/loss_relax', val_loss_relax, epoch+1)
-        # writer.add_scalar('VAL/cross_entropy_relax', val_cross_entropy_relax, epoch + 1)
-        # writer.add_scalar('VAL/mse_relax', val_mse_relax, epoch+1)
-
-        # writer.add_scalar('VAL/loss', val_loss, epoch+1)
-        # writer.add_scalar('VAL/cross_entropy', val_cross_entropy, epoch + 1)
-        # writer.add_scalar('VAL/mse', val_mse, epoch+1)
         wandb.log({
             'VAL/loss_relax': val_loss_relax,
             'VAL/cross_entropy_relax': val_cross_entropy_relax,
