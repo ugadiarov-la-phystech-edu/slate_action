@@ -179,6 +179,69 @@ class COMPAS(nn.Module):
 
         return recon_transformer.clamp(0., 1.)
 
+    def extract_state(self, img):
+        # dvae encode
+        z_logits = F.log_softmax(self.dvae.encoder(img), dim=1)
+
+
+            # hard z
+        z_hard = torch.argmax(z_logits, axis=1)
+        z_hard = F.one_hot(z_hard, num_classes=self.vocab_size).permute(0, 3, 1, 2).float()
+
+        # add BOS token
+        one_hot_tokens = z_hard.permute(0, 2, 3, 1).flatten(start_dim=1, end_dim=2)
+        one_hot_tokens = torch.cat([torch.zeros_like(one_hot_tokens[..., :1]), one_hot_tokens], dim=-1)
+        one_hot_tokens = torch.cat([torch.zeros_like(one_hot_tokens[..., :1, :]), one_hot_tokens], dim=-2)
+        one_hot_tokens[:, 0, 0] = 1.0
+
+        # tokens to embeddings
+        emb_input = self.dictionary(one_hot_tokens)
+        emb_input = self.positional_encoder(emb_input)
+
+        # slot attention
+        slots, _ = self.slot_attn(emb_input[:, 1:])
+        return slots, z_hard
+
+
+    def next_state(self, state, action):
+        state, z_hard = state
+
+        B, _, H_enc, W_enc = z_hard.shape
+        slots = self.slot_proj(state)
+
+        action_repr = self.action_proj(action)
+        slots = torch.cat([slots, action_repr.unsqueeze(1)], dim=1)
+
+        z_gen = z_hard.new_zeros(0)
+
+        z_transformer_input = z_hard.new_zeros(B, 1, self.vocab_size + 1)
+        z_transformer_input[..., 0] = 1.0
+        for t in range(self.gen_len):
+            decoder_output = self.tf_dec(
+                self.positional_encoder(self.dictionary(z_transformer_input)),
+                slots
+            )
+
+            z_next = F.one_hot(self.out(decoder_output)[:, -1:].argmax(dim=-1), self.vocab_size)
+            z_gen = torch.cat((z_gen, z_next), dim=1)
+            z_transformer_input = torch.cat([
+                z_transformer_input,
+                torch.cat([torch.zeros_like(z_next[:, :, :1]), z_next], dim=-1)
+            ], dim=1)
+
+        z_gen = z_gen.transpose(1, 2).float().reshape(B, -1, H_enc, W_enc)
+
+        one_hot_tokens = z_gen.permute(0, 2, 3, 1).flatten(start_dim=1, end_dim=2)
+        one_hot_tokens = torch.cat([torch.zeros_like(one_hot_tokens[..., :1]), one_hot_tokens], dim=-1)
+        one_hot_tokens = torch.cat([torch.zeros_like(one_hot_tokens[..., :1, :]), one_hot_tokens], dim=-2)
+        one_hot_tokens[:, 0, 0] = 1.0
+
+        # tokens to embeddings
+        emb_input = self.dictionary(one_hot_tokens)
+        emb_input = self.positional_encoder(emb_input)
+        slots, _ = self.slot_attn(emb_input[:, 1:])
+        return slots, z_gen
+
 
 class OneHotDictionary(nn.Module):
     def __init__(self, vocab_size, emb_size):

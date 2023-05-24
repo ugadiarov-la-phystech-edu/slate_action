@@ -1,7 +1,13 @@
 import math
+import os
+import numpy as np
+from scipy import optimize
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from atari_env import AtariEnv
+
+from causal_world_push import CausalWorldPush
 
 
 def gumbel_max(logits, dim=-1):
@@ -102,3 +108,67 @@ def gru_cell(input_size, hidden_size, bias=True):
         nn.init.zeros_(m.bias_hh)
     
     return m
+
+
+def get_env(env_name, env_config = dict()):
+    if env_name == 'cw-push':
+        return CausalWorldPush(**env_config)
+    elif env_name == 'pong':
+        return AtariEnv('PongDeterministic-v4', **env_config)
+    elif env_name == 'spinv':
+        return AtariEnv('SpaceInvadersDeterministic-v4', **env_config)
+    else:
+        ValueError(f"Env {env_name} is not supported")
+        
+
+def create_dirs(dir_path):
+    if len(dir_path) == 0:
+        return
+
+    if not os.path.isdir(dir_path):
+        if os.path.isfile(dir_path):
+            return
+        os.makedirs(dir_path)
+        
+def to_one_hot(val, max_val):
+    result = np.zeros(max_val)
+    result[val] = 1
+    return result
+
+def hungarian_l2_loss(x, y):
+    n_objs = x.shape[1]
+    pairwise_cost = torch.pow(torch.unsqueeze(y, -2).expand(-1, -1, n_objs, -1) - torch.unsqueeze(x, -3).expand(-1, n_objs, -1, -1), 2).mean(dim=-1)
+    indices = np.array(list(map(optimize.linear_sum_assignment, pairwise_cost.detach().cpu().numpy())))
+    transposed_indices = np.transpose(indices, axes=(0, 2, 1))
+    final_costs = torch.gather(pairwise_cost, dim=-1, index=torch.LongTensor(transposed_indices).to(pairwise_cost.device))[:, :, 1]
+    return final_costs.sum(dim=1)
+
+def hungarian_huber_loss(x, y):
+    n_objs = x.shape[1]
+    pairwise_cost = F.smooth_l1_loss(torch.unsqueeze(y, -2).expand(-1, -1, n_objs, -1), torch.unsqueeze(x, -3).expand(-1, n_objs, -1, -1), reduction='none').mean(dim=-1)
+    indices = np.array(list(map(optimize.linear_sum_assignment, pairwise_cost.detach().cpu().numpy())))
+    transposed_indices = np.transpose(indices, axes=(0, 2, 1))
+    final_costs = torch.gather(pairwise_cost, dim=-1, index=torch.LongTensor(transposed_indices).to(pairwise_cost.device))[:, :, 1]
+    return final_costs.sum(dim=1)
+
+def slots_distance_matrix(x, y):
+    num_samples, num_objects, dim = x.shape
+    
+
+    x = x.unsqueeze(1).expand(num_samples, num_samples, num_objects, dim)
+    y = y.unsqueeze(0).expand(num_samples, num_samples, num_objects, dim)
+    
+    loss_matrix = hungarian_l2_loss(x.reshape(-1, num_objects, dim), y.reshape(-1, num_objects, dim))
+    return loss_matrix.reshape(num_samples, num_samples)
+    
+    
+
+def pairwise_distance_matrix(x, y):
+
+    num_samples = x.size(0)
+    dim = x.size(1)
+
+    x = x.unsqueeze(1).expand(num_samples, num_samples, dim)
+    y = y.unsqueeze(0).expand(num_samples, num_samples, dim)
+
+    return torch.pow(x - y, 2).sum(2)
