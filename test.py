@@ -2,6 +2,8 @@ from collections import defaultdict
 import os.path
 import argparse
 
+import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
@@ -10,6 +12,7 @@ from datetime import datetime
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+from causal_world_push import CausalWorldPush
 from compas import COMPAS
 from utils import get_env, slots_distance_matrix
 
@@ -27,7 +30,7 @@ parser.add_argument('--image_size', type=int, default=96)
 parser.add_argument('--action_size', type=int, default=9)
 parser.add_argument('--num_episodes', type=int, default=1000)
 parser.add_argument('--steps_per_episode', type=int, default=101)
-parser.add_argument('--one_hot_actions', type=bool, action='store_true')
+parser.add_argument('--one_hot_actions', action='store_true')
 
 parser.add_argument('--checkpoint_path', default='checkpoint.pt.tar')
 parser.add_argument('--log_path', default='logs')
@@ -56,23 +59,23 @@ parser.add_argument('--max_batches', default=20, type=int)
 
 args = parser.parse_args()
 
-torch.manual_seed(args.seed)
-
-arg_str_list = ['{}={}'.format(k, v) for k, v in vars(args).items()]
-arg_str = '__'.join(arg_str_list)
-log_dir = os.path.join(args.log_path, datetime.today().isoformat())
-writer = SummaryWriter(log_dir)
-writer.add_text('hparams', arg_str)
-
-loader_kwargs = {
-    'batch_size': 1,
-    'shuffle': True,
-    'num_workers': args.num_workers,
-    'pin_memory': True,
-    'drop_last': True,
-}
-
-env = get_env(args.env_name, dict(image_size=args.image_size))
+# torch.manual_seed(args.seed)
+#
+# arg_str_list = ['{}={}'.format(k, v) for k, v in vars(args).items()]
+# arg_str = '__'.join(arg_str_list)
+# log_dir = os.path.join(args.log_path, datetime.today().isoformat())
+# writer = SummaryWriter(log_dir)
+# writer.add_text('hparams', arg_str)
+#
+# loader_kwargs = {
+#     'batch_size': 1,
+#     'shuffle': True,
+#     'num_workers': args.num_workers,
+#     'pin_memory': True,
+#     'drop_last': True,
+# }
+#
+# env = get_env(args.env_name, dict(image_size=args.image_size))
 
 model = COMPAS(args)
 state = torch.load(args.weights, map_location='cpu')
@@ -80,6 +83,35 @@ model.load_state_dict(state)
 model.cuda()
 model.zero_action.cuda()
 model.eval()
+
+env = CausalWorldPush()
+obs = env.env.reset()[0]
+obs = cv2.resize(obs, dsize=(96, 96), interpolation=cv2.INTER_CUBIC).transpose(2, 0, 1)
+obs_torch = torch.as_tensor(obs, dtype=torch.float32, device='cuda') / 255.
+obs_torch = obs_torch.unsqueeze(0)
+
+reconstruction, attn = model.reconstruct_autoregressive(obs_torch, action=None, eval=True)
+obs = obs.transpose(1, 2, 0)
+
+reconstruction = reconstruction[0].detach().cpu().numpy()
+reconstruction = reconstruction.transpose(1, 2, 0)
+
+attn = attn[0].detach().cpu().numpy()
+attn = attn.transpose(0, 2, 3, 1)
+
+
+fig, axes = plt.subplots(nrows=1, ncols=8, figsize=(4, 4))
+for i in range(8):
+    axes[i].axis('off')
+    if i == 0:
+        axes[0].imshow(obs)
+    elif i == 1:
+        axes[1].imshow(reconstruction)
+    else:
+        axes[i].imshow(attn[i - 2])
+
+plt.show()
+
 
 test_steps = map(int, args.test_steps.split(','))
 test_sampler = None
